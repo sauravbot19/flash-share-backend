@@ -1,162 +1,223 @@
 # FlashShare — Distributed High-Throughput Ride-Sharing & Geospatial Matching Platform
 
-FlashShare is an enterprise-grade, event-driven microservices backend designed to handle high-frequency location tracking, low-latency spatial driver matching, and asynchronous event propagation at scale.
+FlashShare is an enterprise-grade, event-driven microservices platform designed to handle high-frequency location tracking, low-latency spatial driver matching, and asynchronous event propagation at scale.
 
-The platform leverages a hybrid storage strategy—combining relational consistency with ultra-fast in-memory caching—and choreographs communication across distributed services using an independent event bus.
+Instead of simple CRUD operations over isolated profiles, the platform provides an end-to-end hyper-local dynamic routing engine (**Flash-Share**) that coordinates riders and moving vehicles in real time. It balances high-velocity data streaming with absolute transactional integrity across a decoupled distributed infrastructure.
 
 ---
 
-## 🏗️ System Architecture Overview
+## 🏗️ Complete System Architecture Overview
 
-The complete targeted architecture transitions from an edge layer down through isolated business domains, coordinated asynchronously via message brokers to eliminate tight runtime coupling.
+The platform transitions from stateful connection edges down through decoupled business domains. Synchronous operations are minimized via an asynchronous message backplane, eliminating runtime coupling and protecting core data structures.
 
 ```
-              [ Mobile / Web Clients ]
-                         │  (HTTP / REST)
-                         ▼
-                ┌─────────────────┐
-                │   API Gateway   │  (Security, JWT Validation, Rate Limiting)
-                └────────┬────────┘
-                         │
-        ┌────────────────┴────────────────┐
-        ▼                                 ▼
-┌───────────────────────┐         ┌───────────────────────┐
-│     Rider Service     │         │    Driver Service     │
-│     (Port: 8081)      │         │     (Port: 8082)      │
-└───────────┬───────────┘         └───────────┬───────────┘
-            │                                 │
-            ├─────────────────────────────────┼────────────────────────────────┐
-            ▼ (Transactional)                 ▼ (Geospatial / Caching)          ▼ (Pub-Sub Streaming)
-┌───────────────────────┐         ┌───────────────────────┐         ┌───────────────────────┐
-│       MySQL 8.0       │         │      Redis Stack      │         │     Apache Kafka      │
-│ (Relational Storage)  │         │ (Spatial Index / RAM) │         │    (Event Broker)     │
-└───────────────────────┘         └───────────────────────┘         └───────────────────────┘
+                        [ Mobile / Web Clients ]
+                           │              ▲
+               (HTTP/REST) │              │ (Persistent WebSockets)
+                           ▼              │
+                 ┌────────────────────────────────┐
+                 │          API Gateway           │ (Security, Rate Limiting, CORS)
+                 └──────────────┬─────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        ▼                       ▼                       ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│ Rider Service │       │ Driver Service│       │ Trip Service  │ (State Controller)
+│ (Port: 8081)  │       │ (Port: 8082)  │       │ (Port: 8083)  │
+└───────────────┘       └───────────────┘       └───────┬───────┘
+        │                       │                       │
+        ▼                       ▼                       ▼
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│ Matching Serv.│       │ Websocket Srv.│       │ Notification  │
+│ (Route Math)  │       │ (Live Streams)│       │ (Push/Alerts) │
+└───────┬───────┘       └───────┬───────┘       └───────┬───────┘
+        │                       │                       │
+        ├───────────────────────┴───────────────────────┤
+        ▼ (Transactional)       ▼ (Geospatial Cache)    ▼ (Pub-Sub Log)
+┌───────────────┐       ┌───────────────┐       ┌───────────────┐
+│   MySQL 8.0   │       │  Redis Stack  │       │ Apache Kafka  │
+│ (Primary Store)       │ (Spatial RAM) │       │ (Event Bus)   │
+└───────────────┘       └───────────────┘       └───────────────┘
+
 ```
 
 ---
 
 ## 🛠️ Technology Stack
 
-* **Core Framework:** Java 17, Spring Boot 3.x, Spring Cloud Ecosystem (Gateway, Config Server)
-* **Event Streaming & Messaging:** Apache Kafka (Distributed Pub-Sub Log)
+* **Core Framework:** Java 17, Spring Boot 3.x, Spring Cloud Gateway
+* **Event Streaming & Messaging:** Apache Kafka (Distributed Append-Only Commit Log)
 * **High-Speed Cache & Spatial Indexing:** Redis Stack (Geospatial Geohashes & Sorted Sets)
+* **Real-Time Client Duplexing:** Spring WebSockets, STOMP Messaging Protocol
 * **Relational Storage:** MySQL 8.0 (ACID-compliant transactional store)
-* **Database Evolution:** Flyway / Liquibase (Version-controlled schema migrations)
+* **Database Evolution:** Flyway / Liquibase version-controlled migration scripts
 * **Fault Tolerance & Resilience:** Resilience4j (Circuit Breakers, Retries, Rate Limiters)
 * **Security Layer:** Spring Security, JSON Web Tokens (JWT) Stateless Authentication
-* **Data Layer Tools:** Spring Data JPA, Hibernate ORM, Jackson (JSON Serialization)
-* **Infrastructure Pipeline:** Docker, Multi-Stage Dockerfiles, Docker Compose
+* **Infrastructure Pipeline:** Docker, Multi-Stage Optimized Dockerfiles, Docker Compose
 
 ---
 
-## 🌟 Key Features & Architectural Patterns
+## 🌟 Domain Architecture & Key Design Patterns
 
-### 1. Asynchronous Event Choreography (Implemented)
-* **Decoupled Workflows:** Microservices interact out-of-band using high-performance **Kafka Event Streams** to process core actions like user registrations and active ride requests (`ride-requests`).
-* **Data Integrity:** Configured **Idempotent Kafka Producers** to eliminate duplicate message processing and maintain reliable cross-service consistency under unstable network conditions.
-* **Horizontal Scalability:** Implemented consumer group management with isolated worker thread pools (`@KafkaListener`) over a **3-partition layout**, enabling independent throughput scaling across instances.
+### 1. Flash-Share Routing & Proximity Matching Engine
 
-### 2. High-Speed Geospatial Bounding Proximity Math (Implemented)
-* **Sub-Millisecond Queries:** Utilizes Redis Sorted Sets via `opsForGeo().radius()` to compute spatial driver lookups within dynamic kilometer bounding radii in microseconds.
-* **Hydration Pattern:** Redis serves as an ultra-fast structural filter to isolate near-field entity IDs, leaving the transactional layer to perform targeted data hydration (`SELECT ... WHERE id IN (...)`), protecting database memory overhead.
+* **Sub-Millisecond Geohashing:** Utilizes Redis Sorted Sets via `opsForGeo().radius()` to query active driver coordinates within dynamic bounding fields.
+* **Overlapping Vector Math:** The Matching Service evaluates a rider's destination against a driver's active route vector. It isolates ongoing commutes passing within a 500-meter threshold of the request corridor.
+* **Hydration Pattern:** Redis filters near-field entity IDs in memory. The service then passes clean ID arrays to the database layer to perform isolated record hydration (`SELECT ... WHERE id IN (...)`), preserving database memory overhead.
 
-### 3. Distributed Cache-Aside (Lazy Loading) Strategy (Implemented)
-* **Database Offloading:** Eliminates redundant MySQL read bottlenecks for high-traffic profiles by implementing a robust **Cache-Aside Pattern**.
-* **Self-Healing Pools:** Enforces a strict **Time-To-Live (TTL)** strategy (10-minute automated cache invalidation window) to eliminate stale data pools and guarantee consistency with the master database.
+### 2. Transactional State Control (Trip Service)
 
-### 4. Edge Routing & Centralized Identity Enforcement (Planned / Roadmap)
-* **API Gateway Routing:** Implementation of a centralized **Spring Cloud Gateway** routing layer to manage cross-origin resource sharing (CORS), aggregate microservice entry points, and obscure interior network topologies.
-* **Stateless JWT Verification:** Integration of **Spring Security** filters at the edge gateway to decrypt and validate incoming Bearer Tokens, managing identity propagation downstream via secure HTTP headers.
+* **State Machine Isolation:** Handles the strict lifecycle progression of a ride (`PENDING` $\rightarrow$ `ACCEPTED` $\rightarrow$ `STARTED` $\rightarrow$ `COMPLETED`).
+* **Concurrency Protection:** Protects inventory assets (such as empty vehicle seats) by utilizing pessimistic locking mechanisms during critical acceptance handshakes.
 
-### 5. Resilient Fault Isolation & Self-Healing (Planned / Roadmap)
-* **Circuit Breaking:** Implementation of **Resilience4j Circuit Breakers** on inter-service communications to intercept cascading connection failures and gracefully transition to fallback methods.
-* **Active Rate Limiting:** Enforcing localized rate-limiting algorithms to protect high-traffic public endpoints from request spikes and Denial of Service (DoS) anomalies.
+### 3. Asynchronous Event Choreography
 
-### 6. Version-Controlled Schema Evolutions (Planned / Roadmap)
-* **Database Migrations:** Integration of **Flyway Migration Scripts** (`V1__init.sql`, `V2__add_index.sql`) to completely remove Hibernate's high-risk `ddl-auto: update` behavior from production pipelines.
+* **Decoupled Workflows:** Business components interact completely out-of-band using high-performance Kafka topics. The `Trip Service` issues success packets to the client immediately after updating the database, handing the execution off to Kafka.
+* **Idempotent Delivery:** Configured with idempotent producers and unique message tracking IDs to prevent duplicate actions (like multiple acceptance signals for a single trip) across network boundaries.
+* **Partition Tuning:** Topics use a multi-partition strategy mapped against trip IDs, guaranteeing sequential execution order for single rides while processing multiple trips concurrently.
+
+### 4. Telemetry Bypass Engine
+
+* **High-Frequency Routing:** To prevent database connection pooling exhaustion, driver location updates (sent every 3 seconds) bypass the relational database entirely.
+* **Live Ingestion:** Coordinates hit the Redis spatial index via `GEOADD`. The data shifts out to the WebSocket layer instantly, preserving MySQL CPU cycles for strict transactional operations.
 
 ---
 
-## 📂 Project Structure
+## 📂 Multi-Module Project Structure
 
 ```text
 flash-share-parent/
  │
  ├── pom.xml                        # Master Parent Maven configuration
- ├── docker-compose.yml             # Unified local infrastructure composition
+ ├── docker-compose.yml             # Unified local infrastructure configuration
  │
- ├── rider-service/                 # Handles Rider Profiles, Booking Requests & Cache-Aside Reads
- │    ├── Dockerfile                # Multi-stage optimized JRE runtime container build
- │    ├── pom.xml                   # Module-specific dependencies
- │    └── src/main/java/com/flashshare/riderservice/
+ ├── api-gateway/                   # Edge routing, SSL termination, and JWT validation
  │
- ├── driver-service/                # Manages Driver States, Telemetry & Real-Time Matching Loops
- │    ├── pom.xml
- │    └── src/main/java/com/flashshare/driverservice/
+ ├── rider-service/                 # Manages Rider Accounts, Profiles, and Cache-Aside lookup logic
  │
- └── api-gateway/ [Planned]         # Edge routing, Spring Security, and Stateless JWT Verification
+ ├── driver-service/                # Manages Driver details, shift status, and registration
+ │
+ ├── flash-share-matching-service/  # Stateless microservice for spatial math & Redis GEO queries
+ │
+ ├── trip-service/                  # State Machine controller for trip lifecycles (MySQL driver)
+ │
+ ├── websocket-server/              # Manages persistent stateful connections to active clients
+ │
+ └── notification-service/          # Consumes Kafka event streams to fire push notifications/SMS
+
 ```
 
 ---
 
-## 🚦 Core API Specifications & Endpoints
+## 🚦 Complete Component API & Stream Specifications
 
-### 🔹 Rider Service (`Port: 8081`)
+### 1. Ingress & Connection Layers
 
-* `POST /api/v1/riders` — Registers a rider, persists record to MySQL, and publishes telemetry to Kafka.
-* `PATCH /api/v1/riders/{id}/location` — Updates moving spatial telemetry coordinates inside the Redis cache.
-* `GET /api/v1/riders/{id}` — Returns active profile details via the **Cache-Aside Redis engine**.
-* `GET /api/v1/riders/nearby` — Executes an instant geo-radius search against live Redis coordinates.
-* `POST /api/v1/riders/{id}/request-ride` — Fires a live booking payload directly into the `ride-requests` Kafka stream.
+#### 🔀 API Gateway (`Port: 8080`)
 
-### 🔹 Driver Service (`Port: 8082`)
+* Proxies all inbound public REST traffic to downstream services.
 
-* `@KafkaListener(topics = "ride-requests")` — Intercepts distributed ride-booking payloads completely out-of-band to initialize geographic search grids.
+#### 🔌 WebSocket Server (`Port: 8085`)
+
+* `WS /ws/tracking` — Persistent connection endpoint for real-time map updates.
+* **Subscribe Topic:** `/topic/trips/{tripId}` — Inbound pipe for riders tracking driver approach paths.
 
 ---
 
-## 🚀 Local Installation & Execution Steps
+### 2. Microservice Domains
+
+#### 📱 Rider Service (`Port: 8081`)
+
+* `POST /api/v1/riders` — Registers profile records.
+* `GET /api/v1/riders/{id}` — Returns rider profiles using a **Cache-Aside Redis strategy**.
+
+#### 🚗 Driver Service (`Port: 8082`)
+
+* `POST /api/v1/drivers` — Provisions driver assets and vehicle vacancy states.
+* `PATCH /api/v1/drivers/{id}/telemetry` — Low-overhead ingest pipe for 3-second GPS updates.
+
+#### 🧠 Flash-Share Matching Service (`Port: 8083`)
+
+* `GET /api/v1/match` — Compares an active position against moving vehicle vectors. Returns optimized candidate lists.
+
+#### ⚙️ Trip Service (`Port: 8084`)
+
+* `POST /api/v1/trips/request` — Instantiates a ride request (`FLASH_REQUEST_PENDING`).
+* `PATCH /api/v1/trips/{id}/accept` — Executes atomic assignment transition to `FLASH_REQUEST_ACCEPTED`.
+* `PATCH /api/v1/trips/{id}/start` — Transitions status to `RIDE_STARTED`.
+
+---
+
+### 3. Kafka Messaging Fabric & Event Specifications
+
+```
+┌───────────────────────┬───────────────────────────────┬───────────────────────────────┐
+│ Topic Name            │ Emitting Component            │ Consuming Components          │
+├───────────────────────┼───────────────────────────────┼───────────────────────────────┤
+│ flash-pickup-request  │ Trip Service                  │ Notification Service          │
+│ flash-pickup-accepted │ Trip Service                  │ WebSocket Server / Rerouter   │
+│ driver-telemetry-raw  │ Driver Service                │ Matching Service / Redis      │
+└───────────────────────┴───────────────────────────────┴───────────────────────────────┘
+
+```
+
+---
+
+## 🚀 Environment Initialization & Bootstrapping
 
 ### Prerequisites
 
-* Java 17 Development Kit (JDK) installed
-* Apache Maven 3.8+ installed
-* Docker Desktop operational on host system
+* Java 17 Development Kit (JDK)
+* Apache Maven 3.8+
+* Docker Desktop
 
-### 1. Launch Core Infrastructure Layers
+### 1. Provision Infrastructure Dependencies
 
-Spin up the coordinated database, cache, and streaming infrastructure engines using Docker:
+Spin up the integrated database, messaging, and orchestration containers:
 
 ```bash
 docker compose up -d
+
 ```
 
-*Verify that MySQL (`3307`), Redis (`6379`), RedisInsight (`8001`), and Apache Kafka (`9092`) are active before starting the services.*
+> **Verification Check:** Ensure MySQL (`3307`), Redis (`6379`), RedisInsight (`8001`), and Apache Kafka (`9092`) are ready for connections before starting application services.
 
-### 2. Launch the Application Modules Locally
+### 2. Compile and Build Modules
 
-Open separate terminal tabs for each individual service component and execute:
-
-**Rider Service Engine:**
+Execute a clean compilation from the parent container directory:
 
 ```bash
-cd rider-service
-mvn spring-boot:run
+mvn clean install
+
 ```
 
-**Driver Service Engine:**
+### 3. Orchestrate Services Locally
+
+Run the business modules in priority order using separate terminal shells:
 
 ```bash
-cd driver-service
-mvn spring-boot:run
+# 1. Boot Ingress Edge
+cd api-gateway && mvn spring-boot:run
+
+# 2. Boot Core Domain Catalogs
+cd rider-service && mvn spring-boot:run
+cd driver-service && mvn spring-boot:run
+
+# 3. Boot State Engines & Math Evaluators
+cd trip-service && mvn spring-boot:run
+cd flash-share-matching-service && mvn spring-boot:run
+
+# 4. Boot Push & Dynamic Infrastructure Edges
+cd websocket-server && mvn spring-boot:run
+cd notification-service && mvn spring-boot:run
+
 ```
 
-### 3. Verify End-to-End Execution Flow
+### 4. End-to-End Flow Verification Trace
 
-Fire a sample trip request payload into the gateway using an API tool like Postman:
+To validate the full platform pipeline without client hardware:
 
-```http
-POST http://localhost:8081/api/v1/riders/1/request-ride?destination=Airport_Terminal_3
-```
-
-Observe the asynchronous execution logs in the `driver-service` terminal to see the event stream intercepted, verified, and mapped in real time.
+1. **Simulate Ongoing Driver Route:** Use Postman to stream coordinate pairs into the telemetry endpoint (`PATCH /api/v1/drivers/{id}/telemetry`).
+2. **Execute Matching Query:** Hit the matching router (`GET /api/v1/match`) with a target location to ensure the driver is detected by the Redis geo-index.
+3. **Initiate Trip Lifecycle:** Send a request booking payload to the Gateway (`POST /api/v1/trips/request`).
+4. **Trace Internal Event Logs:** Observe the `notification-service` console to verify the asynchronous collection of the Kafka event and the generation of the downstream push notify payload.
