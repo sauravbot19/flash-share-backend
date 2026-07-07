@@ -1,0 +1,82 @@
+services:
+  # Relational Store
+  rider-service:
+    build:
+      context: .
+      dockerfile: ./rider-service/Dockerfile
+    container_name: fsp-rider-service
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/flash_share_db?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATA_REDIS_HOST=redis-stack
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    depends_on:
+      - mysql
+      - redis-stack
+      - kafka
+    networks:
+      - flash-share-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: flash-share-mysql
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: mypassword
+      MYSQL_DATABASE: flash_share_db
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: always
+    networks:
+      - flash-share-network
+
+  # Fast In-Memory Spatial Cache + Dashboard UI
+  redis-stack:
+    image: redis/redis-stack:latest
+    container_name: flash-share-redis
+    ports:
+      - "6379:6379"   # Redis server port
+      - "8001:8001"   # RedisInsight Web UI dashboard
+    volumes:
+      - redis_data:/data
+    restart: always
+    networks:
+      - flash-share-network
+
+  # Kafka Dependency Engine
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: flash-share-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - flash-share-network
+
+  # Event Streaming Bus Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: flash-share-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - flash-share-network
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  flash-share-network:
+    driver: bridge
