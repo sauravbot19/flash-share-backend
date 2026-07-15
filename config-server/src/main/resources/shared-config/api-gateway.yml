@@ -1,0 +1,10 @@
+server:
+  port: 8080
+
+resilience4j:
+  timelimiter:
+    instances:
+      riderServiceCB:
+        timeout-duration: 5s
+      driverServiceCB:
+        timeout-duration: 5s

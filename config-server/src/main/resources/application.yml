@@ -1,0 +1,13 @@
+server:
+  port: 8888
+
+spring:
+  application:
+    name: config-server
+  profiles:
+    active: native  # 👈 Instructs the server to read from local configuration files
+  cloud:
+    config:
+      server:
+        native:
+          search-locations: classpath:/shared-config # 👈 Where we will store the common .yml files
